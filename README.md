@@ -4,9 +4,9 @@
 [![License](https://img.shields.io/pypi/l/napari-nibabel.svg?color=green)](https://github.com/napari/napari-nibabel/raw/master/LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/napari-nibabel.svg?color=green)](https://pypi.org/project/napari-nibabel)
 [![Python Version](https://img.shields.io/pypi/pyversions/napari-nibabel.svg?color=green)](https://python.org)
+--->
 [![tests](https://github.com/nipy/napari-nibabel/workflows/tests/badge.svg)](https://github.com/nipy/napari-nibabel/actions)
 [![codecov](https://codecov.io/gh/nipy/napari-nibabel/branch/master/graph/badge.svg)](https://codecov.io/gh/nipy/napari-nibabel)
---->
 
 A napari i/o plugin for neuroimaging formats (via nibabel/pydicom). Note that
 this project is in an early prototype stage and is missing many features.
