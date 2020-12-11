@@ -21,14 +21,11 @@ with open('requirements.txt') as f:
             requirements.append(stripped)
 
 
-# https://github.com/pypa/setuptools_scm
-use_scm = {"write_to": "napari_nibabel/_version.py"}
-
 setup(
     name='napari-nibabel',
     author='Gregory R. Lee',
     author_email='grlee77@gmail.com',
-    license='MIT',
+    license='Modified BSD',
     url='https://github.com/grlee77/napari-nibabel',
     description='A napari i/o plugin for neuroimaging formats (via nibabel/pydicom)',
     long_description=read('README.md'),
@@ -36,7 +33,6 @@ setup(
     packages=find_packages(),
     python_requires='>=3.6',
     install_requires=requirements,
-    use_scm_version=use_scm,
     setup_requires=['setuptools_scm'],
     classifiers=[
         'Development Status :: 4 - Beta',
