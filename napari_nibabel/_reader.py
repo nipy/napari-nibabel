@@ -1,13 +1,10 @@
 """
-This module is an example of a barebones numpy reader plugin for napari.
+This module is part of the napari-nibabel plugin.
+It contains reader functions for the file formats supported by nibabel.
+The reader passes metainformation stored in the file headers as well as spatial to the viewer.
 
-It implements the ``napari_get_reader`` hook specification, (to create
-a reader plugin) but your plugin may choose to implement any of the hook
-specifications offered by napari.
-see: https://napari.org/docs/plugins/hook_specifications.html
-
-Replace code below accordingly.  For complete documentation see:
-https://napari.org/docs/plugins/for_plugin_developers.html
+The script is based on the napari cookiecutter template:
+https://github.com/napari/cookiecutter-napari-plugin
 """
 import functools
 import operator
@@ -19,10 +16,11 @@ from napari_plugin_engine import napari_hook_implementation
 
 from nibabel.imageclasses import all_image_classes
 from nibabel.filename_parser import splitext_addext
-
+from nibabel.orientations import apply_orientation, io_orientation, ornt_transform
 
 all_valid_exts = {klass.valid_exts for klass in all_image_classes}
 all_valid_exts = set(functools.reduce(operator.add, all_valid_exts))
+
 
 @napari_hook_implementation
 def napari_get_reader(path):
@@ -78,16 +76,23 @@ def reader_function(path):
         Both "meta", and "layer_type" are optional. napari will default to
         layer_type=="image" if not provided
     """
+    # Napari's standard dimension order is z, y, x with the axe origin in the upper left corner.
+    # Therefore, the viewers axes are oriented anterior to posterior, superior to inferior and right to left.
+    viewer_ornt = np.array([[0., -1.],
+                            [1., -1.],
+                            [2., -1.]],
+                           dtype=int)
+
     # handle both a string and a list of strings
     paths = [path] if isinstance(path, str) else path
 
-    n_spatial = 3
     # note: we don't squeeze the data below, so 2D data will be 3D with 1 slice
+    # note: napari handles 2D data fine if the dimensions are ordered correctly
     if len(paths) > 1:
         # load all files into a single array
         objects = [nib.load(_path) for _path in paths]
-        header = objects[0].header
-        affine = objects[0].affine
+        # take first imageobject for metadata
+        imgobj = objects[0]
         if not all([_obj.shape == _obj[0].shape for _obj in objects]):
             raise ValueError(
                 "all selected files must contain data of the same shape")
@@ -97,50 +102,56 @@ def reader_function(path):
         # stack arrays into single array
         data = np.stack(arrays)
     else:
-        img = nib.load(paths[0])
-        header = img.header
-        affine = img.affine
-        data = img.get_fdata()  # keep this as dataobj or use get_fdata()?
+        imgobj = nib.load(paths[0])
+        # keep this as dataobj or use get_fdata()?
+        data = imgobj.get_fdata()
 
-        spatial_axis_order = tuple(range(n_spatial))
-        if data.ndim > 3:
-            # nibabel formats have spatial axes in the first 3 positions, but
-            # we need to move these to the last 3 for napari.
-            axes = tuple(range(data.ndim))
-            n_nonspatial = data.ndim - 3
-            new_axis_order = axes[-1:-n_nonspatial - 1:-1] + spatial_axis_order
-            data = data.transpose(new_axis_order)
-        else:
-            if spatial_axis_order != (0, 1, 2):
-                data = data.transpose(spatial_axis_order[:data.ndim])
+    header = imgobj.header
+    affine = imgobj.affine
 
+    # align data orientation to the viewer
+    img_ornt = io_orientation(affine)
+    t_ornt = ornt_transform(img_ornt, viewer_ornt)
+    data = apply_orientation(data, t_ornt)
+
+    # handle 4D images, bring the temporal axis to the front and keep the spatial ordering
+    if data.ndim == 4:
+        data = np.transpose(data, (3, 0, 1, 2))
+
+    # TODO: At present napari doesn't fully support non-orthogonal slicing. Thus, the 2d view is not usable,
+    #  with affine transformation including out of slice rotation or similar.
+    #  To preserve the 2D viewer functionality we have to wait till napari fully supports the operations,
+    #  befor adding affine transformation.
+
+    # generate scale values
     try:
-        # only get zooms for the spatial axes
-        zooms = np.asarray(header.get_zooms())[:n_spatial]
-        if np.any(zooms == 0):
+        # get the zooms from image metadata and match it to the viewer dimension order
+        zooms = header.get_zooms()[:3][::-1]
+        if any([i == 0 for i in zooms]):
             raise ValueError("invalid zoom = 0 found in header")
         # normalize so values are all >= 1.0 (not strictly necessary)
         # zooms = zooms / zooms.min()
-        zooms = tuple(zooms)
         if data.ndim > 3:
-            zooms = (1.0, ) * (data.ndim - n_spatial) + zooms
+            zooms = (1.0, ) * (data.ndim - 3) + zooms
     except (AttributeError, ValueError):
         zooms = (1.0, ) * data.ndim
 
+    # TODO: why not apply translate?
+
     apply_translation = False
     if apply_translation:
-        translate = tuple(affine[:n_spatial, 3])
+        # get translate from affine
+        translate = affine[:3, 3]
+        # align translate to the viewer orientation
+        translate = (translate * viewer_ornt[:, 1])[viewer_ornt[:, 0]]
         if data.ndim > 3:
             # set translate = 0.0 on non-spatial dimensions
-            translate = (0.0,) * (data.ndim - n_spatial) + translate
+            translate = (0.0, ) * (data.ndim - 3) + translate
     else:
-        translate = (0.0,) * data.ndim
+        translate = (0.0, ) * data.ndim
 
-    # optional kwargs for the corresponding viewer.add_* method
-    # https://napari.org/docs/api/napari.components.html#module-napari.components.add_layers_mixin
-    # see also: https://napari.org/tutorials/fundamentals/image
     add_kwargs = dict(
-        metadata=dict(affine=affine, header=header),
+        metadata=dict(imgobj=imgobj),
         rgb=False,
         scale=zooms,
         translate=translate,
@@ -152,5 +163,6 @@ def reader_function(path):
     #          e.g. for NIFTI: nii.header._structarr['cal_min']
     #                          nii.header._structarr['cal_max']
 
-    layer_type = "image"  # optional, default is "image"
-    return [(data, add_kwargs, layer_type)]
+    layer_type = 'image'
+    # TODO: maybe add a detection for label images, to load as labels layer?
+    return [(data, add_kwargs, layer_type)] 
