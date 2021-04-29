@@ -1,3 +1,4 @@
+napari>=0.4.7
 napari-plugin-engine>=0.1.4
 nibabel>=3
 numpy
