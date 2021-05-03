@@ -15,7 +15,7 @@ def test_reader(tmp_path):
 
     # write some fake data in NIFTI-1 format
     my_test_file = str(tmp_path / "myfile.nii")
-    original_data = np.random.rand(20, 20)
+    original_data = np.random.rand(5, 5, 1)
     nii = nib.Nifti1Image(original_data, affine=np.eye(4))
     nii.to_filename(my_test_file)
     np.save(my_test_file, original_data)
@@ -30,8 +30,12 @@ def test_reader(tmp_path):
     layer_data_tuple = layer_data_list[0]
     assert isinstance(layer_data_tuple, tuple) and len(layer_data_tuple) > 0
 
+    viewer_ornt = np.array([[2,  1], [1, -1], [0, -1]])
+    nii_ornt = nib.orientations.io_orientation(nii.affine)
+    t_ornt = nib.orientations.ornt_transform(nii_ornt, viewer_ornt)
+    t_nii = nii.as_reoriented(t_ornt)
     # make sure it's the same as it started
-    np.testing.assert_allclose(original_data, layer_data_tuple[0])
+    np.testing.assert_allclose(t_nii.get_fdata(), layer_data_tuple[0])
 
 
 def test_get_reader_pass():

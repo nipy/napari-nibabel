@@ -131,7 +131,7 @@ def reader_function(path):
 
     # TODO: why not apply translate?
 
-    apply_translation = False
+    apply_translation = True
     if apply_translation:
         # get translate from affine
         translate = affine[:3, 3]
