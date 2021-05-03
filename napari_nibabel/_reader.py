@@ -129,9 +129,9 @@ def reader_function(path):
     except (AttributeError, ValueError):
         zooms = (1.0, ) * data.ndim
 
-    # TODO: why not apply translate?
+    # TODO: translate does not work as intended
 
-    apply_translation = True
+    apply_translation = False
     if apply_translation:
         # get translate from affine
         translate = affine[:3, 3]
