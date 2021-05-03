@@ -16,10 +16,18 @@ from napari_plugin_engine import napari_hook_implementation
 
 from nibabel.imageclasses import all_image_classes
 from nibabel.filename_parser import splitext_addext
-from nibabel.orientations import apply_orientation, io_orientation, ornt_transform
+from nibabel.orientations import io_orientation, ornt_transform
 
 all_valid_exts = {klass.valid_exts for klass in all_image_classes}
 all_valid_exts = set(functools.reduce(operator.add, all_valid_exts))
+
+# Napari's standard dimension order is z, y, x with the axe origin in the upper left corner.
+# To display te images in the viewer in a radiological way they must align to the orientation:
+# z: I > S, y: A > P, x: R > L
+viewer_ornt = np.array([[2., 1.],
+                        [1., -1.],
+                        [0., -1.]],
+                       dtype=int)
 
 
 @napari_hook_implementation
@@ -76,43 +84,28 @@ def reader_function(path):
         Both "meta", and "layer_type" are optional. napari will default to
         layer_type=="image" if not provided
     """
-    # Napari's standard dimension order is z, y, x with the axe origin in the upper left corner.
-    # Therefore, the viewers axes are oriented anterior to posterior, superior to inferior and right to left.
-    viewer_ornt = np.array([[0., -1.],
-                            [1., -1.],
-                            [2., -1.]],
-                           dtype=int)
-
     # handle both a string and a list of strings
     paths = [path] if isinstance(path, str) else path
 
     # note: we don't squeeze the data below, so 2D data will be 3D with 1 slice
-    # note: napari handles 2D data fine if the dimensions are ordered correctly
     if len(paths) > 1:
-        # load all files into a single array
+        # combina all images into one
         objects = [nib.load(_path) for _path in paths]
-        # take first imageobject for metadata
-        imgobj = objects[0]
-        if not all([_obj.shape == _obj[0].shape for _obj in objects]):
-            raise ValueError(
-                "all selected files must contain data of the same shape")
-
-        arrays = [_obj.get_fdata() for _obj in objects]
-
-        # stack arrays into single array
-        data = np.stack(arrays)
+        imgobj = nib.concat_images(objects)
     else:
         imgobj = nib.load(paths[0])
-        # keep this as dataobj or use get_fdata()?
-        data = imgobj.get_fdata()
-
-    header = imgobj.header
-    affine = imgobj.affine
-
-    # align data orientation to the viewer
-    img_ornt = io_orientation(affine)
+    # transform the images to the viewer orientation
+    img_ornt = io_orientation(imgobj.affine)
     t_ornt = ornt_transform(img_ornt, viewer_ornt)
-    data = apply_orientation(data, t_ornt)
+    t_imgobj = imgobj.as_reoriented(t_ornt)
+
+    # keep this as dataobj or use get_fdata()?
+    data = t_imgobj.get_fdata()
+    # hande 2D images as 3D images with one slice
+    if data.ndim < 3:
+        data = np.expand_dims(data, axis=2)
+    header = t_imgobj.header
+    affine = t_imgobj.affine
 
     # handle 4D images, bring the temporal axis to the front and keep the spatial ordering
     if data.ndim == 4:
@@ -125,8 +118,8 @@ def reader_function(path):
 
     # generate scale values
     try:
-        # get the zooms from image metadata and match it to the viewer dimension order
-        zooms = header.get_zooms()[:3][::-1]
+        # get the zooms from image metadata
+        zooms = header.get_zooms()[:3]
         if any([i == 0 for i in zooms]):
             raise ValueError("invalid zoom = 0 found in header")
         # normalize so values are all >= 1.0 (not strictly necessary)
@@ -142,8 +135,6 @@ def reader_function(path):
     if apply_translation:
         # get translate from affine
         translate = affine[:3, 3]
-        # align translate to the viewer orientation
-        translate = (translate * viewer_ornt[:, 1])[viewer_ornt[:, 0]]
         if data.ndim > 3:
             # set translate = 0.0 on non-spatial dimensions
             translate = (0.0, ) * (data.ndim - 3) + translate
