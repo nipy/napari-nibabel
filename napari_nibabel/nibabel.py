@@ -225,6 +225,18 @@ def reader_function(path):
         # data cube in the same position in world coordinates
         affine_plumb = adjust_translation(affine, affine_plumb, data.shape)
 
+    # convert from RAS to SPL
+    affine_plumb_spl = affine_plumb.copy()
+    # update scales for RAS -> SPL
+    affine_plumb_spl[0, 0] = affine_plumb[2, 2]  # move S to first
+    affine_plumb_spl[1, 1] = -affine_plumb[1, 1]  # flip A->P
+    affine_plumb_spl[2, 2] = -affine_plumb[0, 0]  # flip R->L, move L last
+    # make the same order and sign flips to the translations
+    affine_plumb_spl[:3, 3] = affine_plumb[2::-1, 3]
+    affine_plumb_spl[2:4, 3] *= -1  # flip R->L, A->P
+    # reverse order of the last 3 data dimensions correspondingly
+    data = data.transpose(tuple(range(0, data.ndim - 3)) + (-1, -2, -3))
+
     # Note: The translate, scale, rotate, shear kwargs correspond to the
     # 'data2physical' component of a composite affine transform.
     # https://github.com/napari/napari/blob/v0.4.11/napari/layers/base/base.py#L254-L268   #noqa
@@ -235,8 +247,8 @@ def reader_function(path):
     add_kwargs = dict(
         metadata=dict(affine=affine, header=header),
         rgb=False,
-        scale=np.diag(affine_plumb[:3, :3]),
-        translate=affine_plumb[:3, 3],
+        scale=np.diag(affine_plumb_spl[:3, :3]),
+        translate=affine_plumb_spl[:3, 3],
         affine=None,
         channel_axis=None,
     )
