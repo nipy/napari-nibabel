@@ -233,7 +233,7 @@ def reader_function(path):
     affine_plumb_spl[2, 2] = -affine_plumb[0, 0]  # flip R->L, move L last
     # make the same order and sign flips to the translations
     affine_plumb_spl[:3, 3] = affine_plumb[2::-1, 3]
-    affine_plumb_spl[2:4, 3] *= -1  # flip R->L, A->P
+    affine_plumb_spl[1:3, 3] *= -1  # flip R->L, A->P
     # reverse order of the last 3 data dimensions correspondingly
     data = data.transpose(tuple(range(0, data.ndim - 3)) + (-1, -2, -3))
 
