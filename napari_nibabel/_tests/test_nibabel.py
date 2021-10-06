@@ -1,5 +1,7 @@
+import atexit
 import os
 import shutil
+import tempfile
 
 import nibabel as nib
 import numpy as np
@@ -168,3 +170,38 @@ def test_analyze_hdr_only():
     filename = os.path.join(data_path, 'analyze.hdr')
     with pytest.raises(FileNotFoundError):
         _test_basic_read(filename)
+
+
+def test_read_filelist():
+    filename = os.path.join(data_path, 'example4d.nii.gz')
+    n_files = 3
+    data = _test_basic_read([filename,]  * n_files)
+    assert data.ndim == 5
+    assert data.shape[0] == n_files
+
+
+def test_read_filelist_mismatched_shape():
+    # cannot stack multiple files when the shapes are different
+    filename = os.path.join(data_path, 'example_nifti2.nii.gz')
+    filename2 = os.path.join(data_path, 'example4d.nii.gz')
+    with pytest.raises(ValueError):
+        _test_basic_read([filename, filename2])
+
+
+def test_read_filelist_mismatched_affine():
+    # cannot stack multiple files when the shapes are different
+    tmp_dir = tempfile.mkdtemp()
+    atexit.register(shutil.rmtree, tmp_dir)
+
+    filename = os.path.join(data_path, 'anatomical.nii')
+    nii1 = nib.load(filename)
+    data = nii1.get_fdata()
+    affine2 = nii1.affine.copy()
+    affine2[0, 0] *= 2
+    affine2[1, 1] *= -1
+    nii2 = nib.Nifti1Image(data, affine=affine2, header=nii1.header)
+    filename2 = os.path.join(tmp_dir, 'anatomical_affine2.nii')
+    nii2.to_filename(filename2)
+
+    with pytest.raises(ValueError):
+        _test_basic_read([filename, filename2])
