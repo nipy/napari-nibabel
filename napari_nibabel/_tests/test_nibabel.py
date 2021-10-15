@@ -17,8 +17,11 @@ def test_reader(tmp_path):
 
     # write some fake data in NIFTI-1 format
     my_test_file = str(tmp_path / "myfile.nii")
-    original_data = np.random.rand(20, 20)
-    nii = nib.Nifti1Image(original_data, affine=np.eye(4))
+    original_data = np.random.rand(20, 20, 1)
+
+    # Set affine to an LPS affine here so internal reorientation will not be
+    # needed.
+    nii = nib.Nifti1Image(original_data, affine=np.diag((-1, -1, 1, 1)))
     nii.to_filename(my_test_file)
     np.save(my_test_file, original_data)
 
