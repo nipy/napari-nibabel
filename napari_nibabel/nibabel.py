@@ -17,20 +17,20 @@ import nibabel as nib
 
 from napari_plugin_engine import napari_hook_implementation
 
+from nibabel import orientations
 from nibabel.imageclasses import all_image_classes
 from nibabel.filename_parser import splitext_addext
-from nibabel.orientations import (io_orientation, inv_ornt_aff,
-                                  apply_orientation)
 
 valid_volume_exts = {klass.valid_exts for klass in all_image_classes}
 valid_volume_exts = set(functools.reduce(operator.add, valid_volume_exts))
 
 
-def reorder_axes_to_ras(affine, data):
+def reorder_axes(affine, data, target=('L', 'P', 'S')):
     """Permutes data dimensions and updates the affine accordingly.
 
-    Reorders and/or flips data axes to get the spatial axes in RAS+ order.
-    For oblique scans the axes closest to RAS (Right-Anterior-Superior) as
+    Reorders and/or flips data axes to get the spatial axes in SPL order.
+
+    For oblique scans the axes closest the desired orientation are
     determined by ``nibabel.affine.io_orientation``.
 
     Parameters
@@ -39,34 +39,36 @@ def reorder_axes_to_ras(affine, data):
         Affine matrix
     data : ndarray
         Data array. Spatial dimensions must be first.
+    target : 3-tuple of str
+        Tuple containing the 'S' or 'I', 'P' or 'A' and 'R' or 'L' in the
+        desired order. The default of ('S', 'P', 'L') means that we will order
+        the data array so the first axis runs from I->S, the second from
+        A->P and the third from L->R.
 
     Returns
     -------
-    affine_ras : (4, 4) ndarray
-        The affine matrix for the RAS-space data.
+    affine_target : (4, 4) ndarray
+        The affine matrix for the data in the target space.
     data_ras : (4, 4) ndarray
-        Data with axes reordered and/or flipped to RAS+ order.
-
-    Notes
-    -----
-    Adapted from code converting to LAS+ in nibabel's parrec2nii.py
+        Data with axes reordered and/or flipped to the target space.
     """
-
-    # Reorient data block to RAS+ if necessary
-    ornt = io_orientation(affine)
-    if np.all(ornt == [[0, 1],
-                       [1, 1],
-                       [2, 1]]):
+    current_ornt = orientations.io_orientation(affine)
+    target_ornt = orientations.axcodes2ornt(target)
+    if np.array_equal(current_ornt, target_ornt):
         # already in desired orientation
         return affine, data
 
-    # Reorient to RAS+
-    t_aff = inv_ornt_aff(ornt, data.shape)
-    affine_ras = np.dot(affine, t_aff)
+    # determine the transform needed to get to the target orientation
+    transform_ornt = orientations.ornt_transform(current_ornt, target_ornt)
 
-    ornt = np.asarray(ornt)
-    data_ras = apply_orientation(data, ornt)
-    return affine_ras, data_ras
+    # update the data array to the desired orientation
+    data_reoriented = orientations.apply_orientation(data, transform_ornt)
+
+    # Update the affine to the target orientation
+    t_aff = orientations.inv_ornt_aff(transform_ornt, data.shape)
+    affine_reoriented = affine.dot(t_aff)
+
+    return affine_reoriented, data_reoriented
 
 
 def adjust_translation(affine, affine_plumb, data_shape):
@@ -188,7 +190,7 @@ def reader_function(path):
         # apply same transform to all volumes in the stack
         affine_orig = affine.copy()
         for i, arr in enumerate(arrays):
-            affine, arr_ras = reorder_axes_to_ras(affine_orig, arr)
+            affine, arr_ras = reorder_axes(affine_orig, arr, target=('L', 'P', 'S'))
             arrays[i] = arr_ras
 
         # stack arrays into single array
@@ -199,7 +201,7 @@ def reader_function(path):
         affine = img.affine
         data = img.get_fdata()  # keep this as dataobj or use get_fdata()?
 
-        affine, data = reorder_axes_to_ras(affine, data)
+        affine, data = reorder_axes(affine, data, target=('L', 'P', 'S'))
 
         spatial_axis_order = tuple(range(n_spatial))
         if data.ndim > 3:
@@ -225,18 +227,6 @@ def reader_function(path):
         # data cube in the same position in world coordinates
         affine_plumb = adjust_translation(affine, affine_plumb, data.shape)
 
-    # convert from RAS to SPL
-    affine_plumb_spl = affine_plumb.copy()
-    # update scales for RAS -> SPL
-    affine_plumb_spl[0, 0] = affine_plumb[2, 2]  # move S to first
-    affine_plumb_spl[1, 1] = -affine_plumb[1, 1]  # flip A->P
-    affine_plumb_spl[2, 2] = -affine_plumb[0, 0]  # flip R->L, move L last
-    # make the same order and sign flips to the translations
-    affine_plumb_spl[:3, 3] = affine_plumb[2::-1, 3]
-    affine_plumb_spl[1:3, 3] *= -1  # flip R->L, A->P
-    # reverse order of the last 3 data dimensions correspondingly
-    data = data.transpose(tuple(range(0, data.ndim - 3)) + (-1, -2, -3))
-
     # Note: The translate, scale, rotate, shear kwargs correspond to the
     # 'data2physical' component of a composite affine transform.
     # https://github.com/napari/napari/blob/v0.4.11/napari/layers/base/base.py#L254-L268   #noqa
@@ -247,8 +237,8 @@ def reader_function(path):
     add_kwargs = dict(
         metadata=dict(affine=affine, header=header),
         rgb=False,
-        scale=np.diag(affine_plumb_spl[:3, :3]),
-        translate=affine_plumb_spl[:3, 3],
+        scale=np.diag(affine_plumb[:3, :3]),
+        translate=affine_plumb[:3, 3],
         affine=None,
         channel_axis=None,
     )
