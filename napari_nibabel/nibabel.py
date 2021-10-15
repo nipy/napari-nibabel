@@ -25,50 +25,10 @@ valid_volume_exts = {klass.valid_exts for klass in all_image_classes}
 valid_volume_exts = set(functools.reduce(operator.add, valid_volume_exts))
 
 
-def reorder_axes(affine, data, target=('L', 'P', 'S')):
-    """Permutes data dimensions and updates the affine accordingly.
-
-    Reorders and/or flips data axes to get the spatial axes in SPL order.
-
-    For oblique scans the axes closest the desired orientation are
-    determined by ``nibabel.affine.io_orientation``.
-
-    Parameters
-    ----------
-    affine : (4, 4) ndarray
-        Affine matrix
-    data : ndarray
-        Data array. Spatial dimensions must be first.
-    target : 3-tuple of str
-        Tuple containing the 'S' or 'I', 'P' or 'A' and 'R' or 'L' in the
-        desired order. The default of ('S', 'P', 'L') means that we will order
-        the data array so the first axis runs from I->S, the second from
-        A->P and the third from L->R.
-
-    Returns
-    -------
-    affine_target : (4, 4) ndarray
-        The affine matrix for the data in the target space.
-    data_ras : (4, 4) ndarray
-        Data with axes reordered and/or flipped to the target space.
-    """
+def get_transform_ornt(affine, target=('L', 'P', 'S')):
     current_ornt = orientations.io_orientation(affine)
-    target_ornt = orientations.axcodes2ornt(target)
-    if np.array_equal(current_ornt, target_ornt):
-        # already in desired orientation
-        return affine, data
-
-    # determine the transform needed to get to the target orientation
-    transform_ornt = orientations.ornt_transform(current_ornt, target_ornt)
-
-    # update the data array to the desired orientation
-    data_reoriented = orientations.apply_orientation(data, transform_ornt)
-
-    # Update the affine to the target orientation
-    t_aff = orientations.inv_ornt_aff(transform_ornt, data.shape)
-    affine_reoriented = affine.dot(t_aff)
-
-    return affine_reoriented, data_reoriented
+    target_ornt = orientations.axcodes2ornt(('L', 'P', 'S'))
+    return orientations.ornt_transform(current_ornt, target_ornt)
 
 
 def adjust_translation(affine, affine_plumb, data_shape):
@@ -175,33 +135,31 @@ def reader_function(path):
     if len(paths) > 1:
         # load all files into a single array
         objects = [nib.load(_path) for _path in paths]
-        header = objects[0].header
         affine = objects[0].affine
+        header = objects[0].header
         if not all([_obj.shape == objects[0].shape for _obj in objects]):
             raise ValueError(
                 "all selected files must contain data of the same shape")
-
         if not all(np.allclose(affine, _obj.affine) for _obj in objects):
             raise ValueError(
                 "all selected files must share a common affine")
-
+        # reorient volumes to the desired orientation
+        transform_ornt = get_transform_ornt(affine, target=('L', 'P', 'S'))
+        objects = [_obj.as_reoriented(transform_ornt)]
         arrays = [_obj.get_fdata() for _obj in objects]
-
-        # apply same transform to all volumes in the stack
-        affine_orig = affine.copy()
-        for i, arr in enumerate(arrays):
-            affine, arr_ras = reorder_axes(affine_orig, arr, target=('L', 'P', 'S'))
-            arrays[i] = arr_ras
+        affine = objects[0].affine
+        header = objects[0].header
 
         # stack arrays into single array
         data = np.stack(arrays)
     else:
         img = nib.load(paths[0])
+        # reorient volume to the desired orientation
+        transform_ornt = get_transform_ornt(img.affine, target=('L', 'P', 'S'))
+        img = img.as_reoriented(transform_ornt)
         header = img.header
         affine = img.affine
         data = img.get_fdata()  # keep this as dataobj or use get_fdata()?
-
-        affine, data = reorder_axes(affine, data, target=('L', 'P', 'S'))
 
         spatial_axis_order = tuple(range(n_spatial))
         if data.ndim > 3:
