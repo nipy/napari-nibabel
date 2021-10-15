@@ -145,7 +145,7 @@ def reader_function(path):
                 "all selected files must share a common affine")
         # reorient volumes to the desired orientation
         transform_ornt = get_transform_ornt(affine, target=('L', 'P', 'S'))
-        objects = [_obj.as_reoriented(transform_ornt)]
+        objects = [_obj.as_reoriented(transform_ornt) for _obj in objects]
         arrays = [_obj.get_fdata() for _obj in objects]
         affine = objects[0].affine
         header = objects[0].header
